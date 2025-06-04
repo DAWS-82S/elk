@@ -109,9 +109,15 @@ network.host: 0.0.0.0
 systemctl restart elasticsearch
 ```
 
+5. Reset elastic password
+```
+/usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic
+```
+Copy the password
+
 5. Test Elastic search
 ```
-curl localhost:9200
+curl --cacert /etc/elasticsearch/certs/http_ca.crt -u elastic:<password> https://localhost:9200
 ```
 
 **Sample Output:**
@@ -138,6 +144,8 @@ curl localhost:9200
 ```
 systemctl enable elasticsearch
 ```
+
+
 #### Kibana
 
 1. Install kibana
@@ -163,6 +171,16 @@ systemctl restart kibana
 
 ```
 systemctl enable kibana
+```
+Get the enrollment token for kibana to elastic-search
+
+```
+/usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana
+```
+
+Get the verification code
+```
+journalctl -u kibana.service | grep "verification code"
 ```
 
 #### Logstash
@@ -233,8 +251,8 @@ vim /etc/yum.repos.d/elasticsearch.repo
 
 ```
 [elasticsearch]
-name=Elasticsearch repository for 7.x packages
-baseurl=https://artifacts.elastic.co/packages/7.x/yum
+name=Elasticsearch repository for 9.x packages
+baseurl=https://artifacts.elastic.co/packages/9.x/yum
 gpgcheck=1
 gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
 enabled=1
@@ -257,7 +275,26 @@ vim /etc/filebeat/filebeat.yml
 - Set `enabled: true` under filebeat.inputs
 - Under paths: modify the log path to `/var/log/nginx/access.log`
 - Specify the elasticsearch IP address for the host variable under output.elasticsearch section
+- Make sure you are using https protocol to connect elastic and ssl.verification_mode: none
 
+```
+output.elasticsearch:
+  # Array of hosts to connect to.
+  hosts: ["172.31.37.77:9200"]
+
+  # Performance preset - one of "balanced", "throughput", "scale",
+  # "latency", or "custom".
+  preset: balanced
+
+  # Protocol - either `http` (default) or `https`.
+  protocol: "https"
+
+  # Authentication credentials - either API key or username/password.
+  #api_key: "id:api_key"
+  username: "elastic"
+  password: ""
+  ssl.verification_mode: none
+```
 4. Start filebeat service
 
 ```
@@ -290,15 +327,23 @@ input {
     port => 5044
   }
 }
+
 filter {
-      grok {
-        match => { "message" => "%{IP:client_ip} \[%{HTTPDATE:timestamp}\] %{WORD:http_method} %{URIPATH:request_path} %{NOTSPACE:http_version} %{NUMBER:status:int} %{NUMBER:response_size:int} \"%{URI:referrer}\" %{NUMBER:response_time:float}" }
-      }
+  grok {
+    match => {
+      "message" => "%{IP:client_ip} \[%{HTTPDATE:timestamp}\] %{WORD:http_method} %{URIPATH:request_path} %{NOTSPACE:http_version} %{NUMBER:status:int} %{NUMBER:response_size:int} \"%{URI:referrer}\" %{NUMBER:response_time:float}"
+    }
+  }
 }
+
 output {
   elasticsearch {
-    hosts => ["http://localhost:9200"]
-    index => "%{[@metadata][beat]}-%{[@metadata][version]}"
+    hosts => ["https://localhost:9200"]
+    index => "logstash-%{+YYYY.MM.dd}"
+    ssl_enabled => true
+    ssl_verification_mode => "none"
+    user => "elastic"
+    password => ""
   }
 }
 ```
